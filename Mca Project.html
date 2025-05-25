@@ -1,0 +1,104 @@
+<html>
+    !pip install deepface
+
+from IPython.display import display, Javascript
+from google.colab.output import eval_js
+from base64 import b64decode
+import cv2
+import numpy as np
+from deepface import DeepFace
+import matplotlib.pyplot as plt
+import time
+
+# Define emotion to sentiment mapping
+emotion_to_sentiment = {
+    'happy': '😊 Positive',
+    'surprise': '😯 Positive',
+    'neutral': '😐 Neutral',
+    'sad': '😢 Negative',
+    'angry': '😠 Negative',
+    'disgust': '🤢 Negative',
+    'fear': '😨 Negative'
+}
+
+# Modified JavaScript code for camera accessq
+def start_camera():
+    display(Javascript('''
+        async function setupCamera() {
+            const video = document.createElement('video');
+            video.style.display = 'block';
+            document.body.appendChild(video);
+
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            video.srcObject = stream;
+            await video.play();
+
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            return { video: video, canvas: canvas };
+        }
+        window.cameraSetup = setupCamera();
+    '''))
+
+start_camera()
+
+# Modified photo capture function
+def get_frame():
+    data = eval_js('''
+        new Promise(async (resolve) => {
+            const { video, canvas } = await window.cameraSetup;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            resolve(canvas.toDataURL('image/jpeg', 0.8));
+        })
+    ''')
+    binary = b64decode(data.split(',')[1])
+    return cv2.imdecode(np.frombuffer(binary, dtype=np.uint8), -1)
+
+# Main processing loop
+try:
+    while True:
+        start_time = time.time()
+        frame = get_frame()
+
+        try:
+            results = DeepFace.analyze(
+                img_path=frame,
+                actions=['emotion'],
+                enforce_detection=True,
+                detector_backend='ssd',
+                silent=True
+            )
+
+            for result in results:
+                emotion = result['dominant_emotion']
+                sentiment = emotion_to_sentiment.get(emotion, '😐 Neutral')
+                confidence = result['emotion'][emotion]
+
+                x = result['region']['x']
+                y = result['region']['y']
+                w = result['region']['w']
+                h = result['region']['h']
+
+                cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                text = f"{emotion} ({confidence:.1f}%) | {sentiment}"
+                cv2.putText(frame, text, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+        except Exception as e:
+            pass
+
+        # Calculate and display FPS
+        fps = 1 / (time.time() - start_time)
+        cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+        # Display in Colab notebook
+        plt.imshow(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        plt.axis('off')
+        plt.show()
+
+        # Break loop if 'q' entered
+        if input("Press Enter to continue or 'q' to quit: ") == 'q':
+            break
+
+except KeyboardInterrupt:
+    print('Stopped')
